@@ -138,7 +138,7 @@
     <section id="rules" class="page">
       <div class="page-actions"><button class="back-home" onclick="showPage('home')">← Accueil</button><button class="back-home secondary" onclick="history.back()">← Retour navigateur</button></div>
       <h2 class="section-title">Règles & <span>barème</span></h2>
-      <div class="grid grid-2"><div class="card"><h3>Système de points</h3><table class="rule-table"><thead><tr><th>Pronostic choisi</th><th>Points</th></tr></thead><tbody><tr><td>Vainqueur du match correct</td><td><b>2 pts</b></td></tr><tr><td>Double chance correcte</td><td><b>1 pt</b><br><span class="muted small">Ex : équipe A ou nul.</span></td></tr><tr><td>Score exact correct</td><td><b>5 pts</b> au total</td></tr><tr><td>Total de buts correct</td><td><b>2 pts</b><br><span class="muted small">Plus de 2,5 ou moins de 2,5 buts.</span></td></tr><tr><td>Les deux équipes marquent</td><td><b>2 pts</b></td></tr><tr><td>Buteur dans le match</td><td><b>3 pts</b><br><span class="muted small">Le joueur cité marque au moins 1 but.</span></td></tr><tr><td>Buteur + nombre de buts exact</td><td><b>5 pts par but</b><br><span class="muted small">Ex : Mané 2 buts = 10 pts seulement s’il marque exactement 2 buts.</span></td></tr><tr><td>Champion du monde correct</td><td><b>15 pts</b></td></tr><tr><td>Meilleur buteur du tournoi correct</td><td><b>10 pts</b></td></tr></tbody></table></div><div class="card"><h3>Qualification</h3><p class="muted">Après la phase de poules, on trie les participants par score cumulé. Le <b>Top 20%</b> se qualifie pour la phase finale.</p><p class="muted"><b>Départage :</b> 1) scores exacts, 2) vainqueurs corrects, 3) buteurs corrects, 4) décision organisateur.</p><h3>Bonus tournoi</h3><p class="muted">Le champion du monde et le meilleur buteur doivent être pronostiqués avant le <b>match d’ouverture du 11 juin 2026 à 19:00 Dakar</b>. Une fois enregistrés, ils sont verrouillés et ne peuvent plus être changés.</p><h3>Phase finale</h3><p class="muted">Aucun multiplicateur. La phase finale utilise exactement le même système de points que la phase de poules. Le classement final = score poules + score phase finale.</p></div></div>
+      <div class="grid grid-2"><div class="card"><h3>Système de points</h3><table class="rule-table"><thead><tr><th>Pronostic choisi</th><th>Points</th></tr></thead><tbody><tr><td>Vainqueur du match correct</td><td><b>2 pts</b></td></tr><tr><td>Double chance correcte</td><td><b>1 pt</b><br><span class="muted small">Ex : équipe A ou nul.</span></td></tr><tr><td>Score exact correct</td><td><b>5 pts</b> au total</td></tr><tr><td>Total de buts correct</td><td><b>2 pts</b><br><span class="muted small">Plus de 2,5 ou moins de 2,5 buts.</span></td></tr><tr><td>Les deux équipes marquent</td><td><b>2 pts</b></td></tr><tr><td>Buteur dans le match</td><td><b>3 pts</b><br><span class="muted small">Le joueur cité marque au moins 1 but.</span></td></tr><tr><td>Buteur + nombre de buts exact</td><td><b>5 pts par but</b><br><span class="muted small">Ex : Mané 2 buts = 10 pts seulement s’il marque exactement 2 buts.</span></td></tr><tr><td>Champion du monde correct</td><td><b>15 pts</b></td></tr><tr><td>Meilleur buteur du tournoi correct</td><td><b>10 pts</b></td></tr></tbody></table></div><div class="card"><h3>Qualification</h3><p class="muted">Après la phase de poules, on trie les participants par score cumulé. Le <b>Top 20%</b> se qualifie pour la phase finale.</p><p class="muted"><b>Départage :</b> 1) scores exacts, 2) vainqueurs corrects, 3) buteurs corrects, 4) décision organisateur.</p><h3>Bonus tournoi</h3><p class="muted">Le champion du monde et le meilleur buteur doivent être pronostiqués avant le <b>match d’ouverture du 11 juin 2026 à 19:00 Dakar</b>. Une fois enregistrés, ils sont verrouillés et ne peuvent plus être changés.</p><h3>Un seul prono par match</h3><p class="muted">Pour chaque match, chaque participant ne peut enregistrer qu’un seul prono actif. Ce prono peut être modifié uniquement jusqu’à <b>10 minutes avant le coup d’envoi</b> du match. Dès que le match est à moins de 10 minutes du début, en cours ou terminé, toute création ou modification de prono est définitivement bloquée.</p><h3>Phase finale</h3><p class="muted">Aucun multiplicateur. La phase finale utilise exactement le même système de points que la phase de poules. Le classement final = score poules + score phase finale.</p></div></div>
       <div class="card" style="margin-top:18px"><h3>Expérience recommandée</h3><p class="muted">Les pronostics sont organisés par journée : Journée 1, Journée 2, Journée 3. L’option “Tout voir” reste disponible pour les participants qui veulent tout remplir d’un coup.</p></div>
     </section>
 
@@ -249,22 +249,91 @@
     function isRemoteEnabled(){
       return APPS_SCRIPT_URL && !APPS_SCRIPT_URL.includes('PASTE_YOUR');
     }
-    async function remotePost(action, payload={}){
-      if(!isRemoteEnabled()) return {ok:false, offline:true, message:'Google Sheets non connecté'};
-      try{
-        const res = await fetch(APPS_SCRIPT_URL, {
-          method:'POST',
-          mode:'cors',
-          headers:{'Content-Type':'text/plain;charset=utf-8'},
-          body: JSON.stringify({action, ...payload})
-        });
-        return await res.json();
-      }catch(e){
-        return {ok:false, error:String(e)};
-      }
+
+    // === ROBUSTESSE GOOGLE SHEETS POUR PIC DE PARTICIPATION ===
+    // Objectif : éviter les faux succès et réduire les pertes de données si beaucoup de personnes valident en même temps.
+    const SYNC_QUEUE_KEY = 'swc2026_pending_sync_queue';
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    function getPendingSyncQueue(){
+      try{return JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY)||'[]') || [];}catch(e){return []}
     }
+    function setPendingSyncQueue(queue){
+      localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify((queue||[]).slice(-200)));
+    }
+    function makeSyncKey(action, payload){
+      const item = payload?.prediction || payload?.profile || {};
+      const id = normalizeId(item.bambooId) || normalize(item.participant||'unknown');
+      return action + ':' + id;
+    }
+    function queuePendingSync(action, payload, reason=''){
+      const queue = getPendingSyncQueue();
+      const syncKey = makeSyncKey(action, payload);
+      const existingIndex = queue.findIndex(item => item.syncKey === syncKey);
+      const pendingItem = {syncKey, action, payload, reason, queuedAt:new Date().toISOString(), attempts:0};
+      if(existingIndex >= 0) queue[existingIndex] = {...queue[existingIndex], ...pendingItem};
+      else queue.push(pendingItem);
+      setPendingSyncQueue(queue);
+    }
+    async function remotePost(action, payload={}, options={}){
+      if(!isRemoteEnabled()) return {ok:false, offline:true, message:'Google Sheets non connecté'};
+      const attempts = options.attempts || 3;
+      const timeoutMs = options.timeoutMs || 20000;
+      const spreadLoad = options.spreadLoad !== false;
+      let lastError = null;
+
+      // Petit délai aléatoire pour éviter que 500 personnes frappent Apps Script exactement à la même seconde.
+      if(spreadLoad) await sleep(250 + Math.floor(Math.random()*1750));
+
+      for(let attempt=1; attempt<=attempts; attempt++){
+        const controller = new AbortController();
+        const timer = setTimeout(()=>controller.abort(), timeoutMs);
+        try{
+          const res = await fetch(APPS_SCRIPT_URL, {
+            method:'POST',
+            mode:'cors',
+            headers:{'Content-Type':'text/plain;charset=utf-8'},
+            body: JSON.stringify({action, requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`, ...payload}),
+            signal: controller.signal
+          });
+          clearTimeout(timer);
+          const text = await res.text();
+          let result;
+          try{ result = text ? JSON.parse(text) : {}; }
+          catch(parseErr){ result = {ok:false, message:'Réponse Google Sheets illisible', raw:text.slice(0,180)}; }
+          if(res.ok && result.ok) return result;
+          lastError = result || {ok:false, status:res.status};
+          // Si Apps Script refuse pour une règle métier, on ne retry pas.
+          if(result && (result.locked || result.validationError || result.forbidden)) return result;
+        }catch(e){
+          clearTimeout(timer);
+          lastError = {ok:false, error:String(e)};
+        }
+        if(attempt < attempts){
+          const backoff = Math.min(8000, 700 * Math.pow(2, attempt-1)) + Math.floor(Math.random()*1200);
+          await sleep(backoff);
+        }
+      }
+      return {...(lastError||{}), ok:false, retryExhausted:true};
+    }
+    async function retryPendingSync(){
+      if(!isRemoteEnabled() || !navigator.onLine) return;
+      let queue = getPendingSyncQueue();
+      if(!queue.length) return;
+      const remaining=[];
+      for(const item of queue){
+        const result = await remotePost(item.action, item.payload, {attempts:2, spreadLoad:true});
+        if(!result.ok){
+          remaining.push({...item, attempts:(item.attempts||0)+1, lastTriedAt:new Date().toISOString(), reason:result.message||result.error||item.reason});
+        }
+        await sleep(500 + Math.floor(Math.random()*1000));
+      }
+      setPendingSyncQueue(remaining);
+      if(queue.length && !remaining.length) toast('Synchronisation Google Sheets finalisée ✅');
+    }
+    window.addEventListener('online', retryPendingSync);
     async function syncRegistrationToSheet(profile){
-      const result = await remotePost('register', {profile});
+      const result = await remotePost('register', {profile}, {attempts:3, spreadLoad:true});
       const msg=$('remoteSyncMsg');
       if(msg){
         if(result.ok){
@@ -273,14 +342,20 @@
         }else if(result.offline){
           msg.innerHTML='<b>Mode local :</b> Google Sheets n’est pas encore connecté. L’inscription est sauvegardée dans ce navigateur.';
         }else{
-          msg.innerHTML='<b>Google Sheets :</b> erreur de synchronisation. Sauvegarde locale conservée.';
+          queuePendingSync('register', {profile}, result.message||result.error||'sync failed');
+          msg.className='bonus-lock-notice locked';
+          msg.innerHTML='<b>Google Sheets :</b> synchronisation non confirmée. L’inscription est gardée en file d’attente et sera retentée.';
         }
       }
       await loadRemoteStats();
       return result;
     }
     async function syncPredictionToSheet(prediction){
-      return await remotePost('savePrediction', {prediction});
+      const result = await remotePost('savePrediction', {prediction}, {attempts:4, spreadLoad:true});
+      if(!result.ok && !result.offline){
+        queuePendingSync('savePrediction', {prediction}, result.message||result.error||'sync failed');
+      }
+      return result;
     }
     async function loadRemoteStats(){
       const result = await remotePost('getStats', {});
@@ -370,6 +445,7 @@
       if($('betGroupLead')) $('betGroupLead').value=profile?.team||'';
       if($('betStatus')) $('betStatus').value=profile?.registrationStatus||'En attente';
       if($('betRegistrationSummary')) $('betRegistrationSummary').innerHTML = hasProfile ? `<b>Participant actuel :</b> ${profile.participant||'Nom non renseigné'} — ${profile.team||'Reporting Lead non renseigné'} <span class="muted">(${profile.registrationStatus||'En attente'})</span>.` : 'Aucun participant enregistré pour le moment. Passe d’abord par la section <b>Inscription</b>.';
+      populatePredictionFields();
     }
     async function saveRegistration(silent=false){
       lookupEmployee();
@@ -427,7 +503,7 @@
       else {pill.textContent='Bonus ouvert'; notice.innerHTML='Bonus ouvert jusqu’au 11 juin 2026 à 19:00 Dakar. Après enregistrement, ces deux champs seront verrouillés pour ce participant.';}
     }
     function toast(msg){$('toast').textContent=msg;$('toast').className='toast show';setTimeout(()=>$('toast').className='toast',2900)}
-    function showPage(id){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));$(id).classList.add('active');document.querySelectorAll('.navlinks button').forEach(b=>b.classList.toggle('active',b.dataset.page===id));if(id==='leaderboard')renderLeaderboard();if(id==='signup')renderRegistrationStats();if(id==='bet') updateRegistrationSummary(false);}
+    function showPage(id){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));$(id).classList.add('active');document.querySelectorAll('.navlinks button').forEach(b=>b.classList.toggle('active',b.dataset.page===id));if(id==='leaderboard')renderLeaderboard();if(id==='signup')renderRegistrationStats();if(id==='bet'){ updateRegistrationSummary(false); populatePredictionFields(); }}
     function initNav(){const nav=$('navlinks');nav.innerHTML=pages.map(p=>`<button data-page="${p[0]}" class="${p[0]==='home'?'active':''}" onclick="showPage('${p[0]}')">${p[1]}</button>`).join('')}
     function matchDayLabel(index){return index<24?'J1':index<48?'J2':'J3'}
     function matchDayTitle(day){return day==='J1'?'Journée 1 — matchs 1 à 24':day==='J2'?'Journée 2 — matchs 25 à 48':day==='J3'?'Journée 3 — matchs 49 à 72':'Tous les matchs de poules'}
@@ -447,6 +523,7 @@
       $('betSteps').innerHTML=`<div class="single-prono-note">${matchDayTitle(currentDayFilter)}</div>`+list.map((m)=>`<div class="step ${m.id===selectedMatchId?'active':''}" onclick="selectMatch('${m.id}')">${m.index+1}. ${m.home} vs ${m.away}<br><span class="muted small">${m.phase} • ${m.date}</span></div>`).join('')+'<div class="step" onclick="document.getElementById(\'bonusBlock\')?.scrollIntoView({behavior:\'smooth\',block:\'start\'})">Bonus tournoi</div>';
       $('matchForms').innerHTML=list.map(m=>matchFormHTML(m)).join('');
       list.forEach(m=>{togglePronoFields(m.id); updatePlayerDropdown(m.id,'scorer'); updatePlayerDropdown(m.id,'first');});
+      populatePredictionFields();
       const active=document.getElementById('form_'+selectedMatchId); if(active) active.classList.add('active');
     }
     function setDayFilter(day){currentDayFilter=day; selectedMatchId=null; renderBetForms()}
@@ -456,8 +533,127 @@
       'Mexique':'Mexico','Afrique du Sud':'South Africa','Tchéquie':'Czechia','États-Unis':'United States','Qatar':'Qatar','Suisse':'Switzerland','Écosse':'Scotland','Haïti':'Haiti','Australie':'Australia','Allemagne':'Germany','Côte d’Ivoire':'Ivory Coast','Équateur':'Ecuador','Brésil':'Brazil','Maroc':'Morocco','Japon':'Japan','Croatie':'Croatia','Autriche':'Austria','Norvège':'Norway','Irak':'Iraq','Arabie saoudite':'Saudi Arabia','Égypte':'Egypt','Jordanie':'Jordan','Cap-Vert':'Cape Verde','Colombie':'Colombia','Ouzbékistan':'Uzbekistan','Italie':'Italy','Tunisie':'Tunisia','Angleterre':'England','Pays-Bas':'Netherlands','Belgique':'Belgium','Argentine':'Argentina','Algérie':'Algeria','Espagne':'Spain','Nouvelle-Zélande':'New Zealand','Suède':'Sweden','RD Congo':'DR Congo','Corée du Sud':'South Korea','Bosnie-Herzégovine':'Bosnia and Herzegovina','Sénégal':'Sénégal','France':'France','Canada':'Canada','Paraguay':'Paraguay','Uruguay':'Uruguay','Panama':'Panama','Ghana':'Ghana','Portugal':'Portugal','Curaçao':'Curaçao'
     };
     function rosterKey(team){return teamRosters[team]?team:(teamRosters[rosterAliases[team]]?rosterAliases[team]:team)}
+
+    const MATCH_LOCK_MINUTES = 10;
+    function parseMatchDateDakar(dateText){
+      const months={janvier:0,fevrier:1,février:1,mars:2,avril:3,mai:4,juin:5,juillet:6,aout:7,août:7,septembre:8,octobre:9,novembre:10,decembre:11,décembre:11};
+      const match=String(dateText||'').toLowerCase().match(/(\d{1,2})\s+([a-zà-ÿ'’\-]+)\s+(\d{4})\s+—\s+(\d{1,2}):(\d{2})/i);
+      if(!match) return null;
+      const day=Number(match[1]);
+      const monthName=match[2].normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const month=months[match[2]] ?? months[monthName];
+      const year=Number(match[3]);
+      const hour=Number(match[4]);
+      const minute=Number(match[5]);
+      if(month===undefined) return null;
+      return new Date(Date.UTC(year, month, day, hour, minute)); // Dakar = UTC
+    }
+    function matchKickoff(m){return parseMatchDateDakar(m?.date)}
+    function matchLockTime(m){const ko=matchKickoff(m); return ko?new Date(ko.getTime()-(MATCH_LOCK_MINUTES*60*1000)):null}
+    function isMatchLocked(m){const lock=matchLockTime(m); return lock ? Date.now()>=lock.getTime() : false}
+    function lockAttr(m){return isMatchLocked(m)?' disabled':''}
+    function matchLockNotice(m){
+      if(!isMatchLocked(m)) return `<div class="bonus-lock-notice ok" style="margin:12px 0"><b>Modification ouverte :</b> ce prono peut être créé ou modifié jusqu’à 10 minutes avant le coup d’envoi.</div>`;
+      return `<div class="bonus-lock-notice locked" style="margin:12px 0"><b>Prono verrouillé :</b> le match est à moins de 10 minutes du coup d’envoi, en cours ou terminé. Toute création ou modification est bloquée.</div>`;
+    }
+    function fieldValue(id){const el=$(id); return el ? String(el.value ?? '').trim() : ''}
+    function normalizeScore(v){return String(Number(v))}
+    function validNonNegativeInteger(v){return v!=='' && /^\d+$/.test(String(v)) && Number(v)>=0}
+    function buildMatchPrediction(m){
+      const type=fieldValue('ptype_'+m.id);
+      if(!type) return {obj:null};
+      const obj={type};
+      if(type==='winner'){
+        obj.winner=fieldValue('win_'+m.id);
+        if(!obj.winner) return {error:`Choisis le vainqueur pour ${m.home} vs ${m.away}.`};
+      }
+      if(type==='double_chance'){
+        obj.doubleChance=fieldValue('dc_'+m.id);
+        if(!obj.doubleChance) return {error:`Choisis la double chance pour ${m.home} vs ${m.away}.`};
+      }
+      if(type==='exact_score'){
+        const hs=fieldValue('hs_'+m.id);
+        const as=fieldValue('as_'+m.id);
+        if(!validNonNegativeInteger(hs) || !validNonNegativeInteger(as)) return {error:`Renseigne les deux scores exacts pour ${m.home} vs ${m.away}. Le score 0 est accepté.`};
+        obj.homeScore=normalizeScore(hs);
+        obj.awayScore=normalizeScore(as);
+      }
+      if(type==='total_goals'){
+        obj.totalGoals=fieldValue('tg_'+m.id);
+        if(!obj.totalGoals) return {error:`Choisis le total de buts pour ${m.home} vs ${m.away}.`};
+      }
+      if(type==='both_score'){
+        obj.btts=fieldValue('btts_'+m.id);
+        if(!obj.btts) return {error:`Choisis Oui ou Non pour “les deux équipes marquent” sur ${m.home} vs ${m.away}.`};
+      }
+      if(type==='anytime_scorer'){
+        obj.scorer=fieldValue('ats_player_'+m.id);
+        obj.scorerTeam=fieldValue('ats_team_'+m.id);
+        if(!obj.scorer) return {error:`Choisis un buteur pour ${m.home} vs ${m.away}.`};
+      }
+      if(type==='scorer'){
+        obj.scorer=fieldValue('sc_player_'+m.id);
+        obj.scorerTeam=fieldValue('sc_team_'+m.id);
+        obj.scorerGoals=fieldValue('sc_goals_'+m.id);
+        if(!obj.scorer) return {error:`Choisis un buteur pour ${m.home} vs ${m.away}.`};
+        if(!/^\d+$/.test(obj.scorerGoals) || Number(obj.scorerGoals)<1) return {error:`Le nombre de buts exact doit être au moins 1 pour ${m.home} vs ${m.away}.`};
+      }
+      return {obj};
+    }
+    function setIfExists(id,value){const el=$(id); if(el) el.value=value ?? ''}
+    function populatePredictionFields(){
+      const existing=findPredictionByParticipant?.();
+      if(!existing || !existing.matches) return;
+      matches.forEach(m=>{
+        const saved=existing.matches[m.id];
+        if(!saved) return;
+        setIfExists('ptype_'+m.id,saved.type||'');
+        setIfExists('win_'+m.id,saved.winner||'');
+        setIfExists('dc_'+m.id,saved.doubleChance||'');
+        setIfExists('hs_'+m.id,saved.homeScore ?? '');
+        setIfExists('as_'+m.id,saved.awayScore ?? '');
+        setIfExists('tg_'+m.id,saved.totalGoals||'');
+        setIfExists('btts_'+m.id,saved.btts||'');
+        setIfExists('ats_team_'+m.id,saved.scorerTeam||'');
+        if($('ats_team_'+m.id)) updatePlayerDropdown(m.id,'anytime');
+        setIfExists('ats_player_'+m.id,saved.scorer||'');
+        setIfExists('sc_team_'+m.id,saved.scorerTeam||'');
+        if($('sc_team_'+m.id)) updatePlayerDropdown(m.id,'scorer');
+        setIfExists('sc_player_'+m.id,saved.scorer||'');
+        setIfExists('sc_goals_'+m.id,saved.scorerGoals||'1');
+        togglePronoFields(m.id);
+      });
+    }
+
     function rosterOptions(team){const key=rosterKey(team); const players=teamRosters[key]||[]; if(!players.length) return '<option value="">Liste joueurs à ajouter</option>'; return '<option value="">Choisir un joueur</option>'+players.map(p=>`<option value="${p}">${p}</option>`).join('')}
-    function matchFormHTML(m){return `<div class="card match-form-card" id="form_${m.id}"><div class="pill">${m.phase}</div><h3>${m.index+1}. ${m.home} vs ${m.away}</h3><div class="muted small">${m.date}</div><div class="single-prono-note" style="margin:14px 0">Choisis un seul type de pronostic pour ce match. Les champs changent selon ton choix.</div><label>Type de pronostic</label><select id="ptype_${m.id}" onchange="togglePronoFields('${m.id}')"><option value="">Ne pas pronostiquer ce match</option><option value="winner">Vainqueur du match</option><option value="double_chance">Double chance</option><option value="exact_score">Score exact</option><option value="total_goals">Total de buts</option><option value="both_score">Les deux équipes marquent</option><option value="anytime_scorer">Buteur dans le match</option><option value="scorer">Buteur + nombre de buts exact</option></select><div id="panel_winner_${m.id}" class="field-panel"><label>Vainqueur</label><select id="win_${m.id}"><option value="">Choisir</option><option>${m.home}</option><option>${m.away}</option><option>Nul</option></select></div><div id="panel_double_chance_${m.id}" class="field-panel"><label>Double chance</label><select id="dc_${m.id}"><option value="">Choisir</option><option value="1X">${m.home} ou Nul</option><option value="12">${m.home} ou ${m.away}</option><option value="X2">Nul ou ${m.away}</option></select></div><div id="panel_exact_score_${m.id}" class="field-panel"><div class="inline-fields"><div><label>${m.home}</label><input id="hs_${m.id}" class="input" type="number" min="0" placeholder="0"></div><div><label>${m.away}</label><input id="as_${m.id}" class="input" type="number" min="0" placeholder="0"></div></div></div><div id="panel_total_goals_${m.id}" class="field-panel"><label>Total de buts</label><select id="tg_${m.id}"><option value="">Choisir</option><option value="over25">Plus de 2,5 buts</option><option value="under25">Moins de 2,5 buts</option></select><div class="muted small" style="margin-top:8px">Ex : 3 buts ou plus = Plus de 2,5. 0, 1 ou 2 buts = Moins de 2,5.</div></div><div id="panel_both_score_${m.id}" class="field-panel"><label>Les deux équipes marquent</label><select id="btts_${m.id}"><option value="">Choisir</option><option value="yes">Oui</option><option value="no">Non</option></select></div><div id="panel_anytime_scorer_${m.id}" class="field-panel"><div class="grid grid-2"><div><label>Équipe du buteur</label><select id="ats_team_${m.id}" onchange="updatePlayerDropdown('${m.id}','anytime')"><option value="${m.home}">${m.home}</option><option value="${m.away}">${m.away}</option></select></div><div><label>Buteur dans le match</label><select id="ats_player_${m.id}">${rosterOptions(m.home)}</select></div></div><div class="muted small" style="margin-top:8px">3 pts si ce joueur marque au moins 1 but dans le match.</div></div><div id="panel_scorer_${m.id}" class="field-panel"><div class="team-select-row"><div><label>Équipe du buteur</label><select id="sc_team_${m.id}" onchange="updatePlayerDropdown('${m.id}','scorer')"><option value="${m.home}">${m.home}</option><option value="${m.away}">${m.away}</option></select></div><div><label>Joueur</label><select id="sc_player_${m.id}">${rosterOptions(m.home)}</select></div><div><label>Nombre de buts exact</label><input id="sc_goals_${m.id}" class="input" type="number" min="1" value="1"></div></div><div class="muted small" style="margin-top:8px">Ex : Mané 2 buts = 10 pts seulement s’il marque exactement 2 buts.</div></div></div>`}
+    function matchFormHTML(m){
+      const disabled=lockAttr(m);
+      return `<div class="card match-form-card" id="form_${m.id}">
+        <div class="pill">${m.phase}</div>
+        <h3>${m.index+1}. ${m.home} vs ${m.away}</h3>
+        <div class="muted small">${m.date}</div>
+        ${matchLockNotice(m)}
+        <div class="single-prono-note" style="margin:14px 0">Choisis un seul type de pronostic pour ce match. Les champs changent selon ton choix.</div>
+        <label>Type de pronostic</label>
+        <select id="ptype_${m.id}" onchange="togglePronoFields('${m.id}')"${disabled}>
+          <option value="">Ne pas pronostiquer ce match</option>
+          <option value="winner">Vainqueur du match</option>
+          <option value="double_chance">Double chance</option>
+          <option value="exact_score">Score exact</option>
+          <option value="total_goals">Total de buts</option>
+          <option value="both_score">Les deux équipes marquent</option>
+          <option value="anytime_scorer">Buteur dans le match</option>
+          <option value="scorer">Buteur + nombre de buts exact</option>
+        </select>
+        <div id="panel_winner_${m.id}" class="field-panel"><label>Vainqueur</label><select id="win_${m.id}"${disabled}><option value="">Choisir</option><option>${m.home}</option><option>${m.away}</option><option>Nul</option></select></div>
+        <div id="panel_double_chance_${m.id}" class="field-panel"><label>Double chance</label><select id="dc_${m.id}"${disabled}><option value="">Choisir</option><option value="1X">${m.home} ou Nul</option><option value="12">${m.home} ou ${m.away}</option><option value="X2">Nul ou ${m.away}</option></select></div>
+        <div id="panel_exact_score_${m.id}" class="field-panel"><div class="inline-fields"><div><label>${m.home}</label><input id="hs_${m.id}" class="input" type="number" min="0" step="1" placeholder="0"${disabled}></div><div><label>${m.away}</label><input id="as_${m.id}" class="input" type="number" min="0" step="1" placeholder="0"${disabled}></div></div><div class="muted small" style="margin-top:8px">Le score 0 est accepté et sera bien enregistré.</div></div>
+        <div id="panel_total_goals_${m.id}" class="field-panel"><label>Total de buts</label><select id="tg_${m.id}"${disabled}><option value="">Choisir</option><option value="over25">Plus de 2,5 buts</option><option value="under25">Moins de 2,5 buts</option></select><div class="muted small" style="margin-top:8px">Ex : 3 buts ou plus = Plus de 2,5. 0, 1 ou 2 buts = Moins de 2,5.</div></div>
+        <div id="panel_both_score_${m.id}" class="field-panel"><label>Les deux équipes marquent</label><select id="btts_${m.id}"${disabled}><option value="">Choisir</option><option value="yes">Oui</option><option value="no">Non</option></select></div>
+        <div id="panel_anytime_scorer_${m.id}" class="field-panel"><div class="grid grid-2"><div><label>Équipe du buteur</label><select id="ats_team_${m.id}" onchange="updatePlayerDropdown('${m.id}','anytime')"${disabled}><option value="${m.home}">${m.home}</option><option value="${m.away}">${m.away}</option></select></div><div><label>Buteur dans le match</label><select id="ats_player_${m.id}"${disabled}>${rosterOptions(m.home)}</select></div></div><div class="muted small" style="margin-top:8px">3 pts si ce joueur marque au moins 1 but dans le match.</div></div>
+        <div id="panel_scorer_${m.id}" class="field-panel"><div class="team-select-row"><div><label>Équipe du buteur</label><select id="sc_team_${m.id}" onchange="updatePlayerDropdown('${m.id}','scorer')"${disabled}><option value="${m.home}">${m.home}</option><option value="${m.away}">${m.away}</option></select></div><div><label>Joueur</label><select id="sc_player_${m.id}"${disabled}>${rosterOptions(m.home)}</select></div><div><label>Nombre de buts exact</label><input id="sc_goals_${m.id}" class="input" type="number" min="1" step="1" value="1"${disabled}></div></div><div class="muted small" style="margin-top:8px">Ex : Mané 2 buts = 10 pts seulement s’il marque exactement 2 buts.</div></div>
+      </div>`
+    }
     function togglePronoFields(id){const type=$('ptype_'+id)?.value||'';['winner','double_chance','exact_score','total_goals','both_score','anytime_scorer','scorer'].forEach(t=>{const p=$('panel_'+t+'_'+id); if(p) p.classList.toggle('active',t===type);});}
     function updatePlayerDropdown(id,kind){const m=matches.find(x=>x.id===id); if(!m) return; const teamEl=$(kind==='anytime'?'ats_team_'+id:'sc_team_'+id); const playerEl=$(kind==='anytime'?'ats_player_'+id:'sc_player_'+id); if(!teamEl||!playerEl)return; playerEl.innerHTML=rosterOptions(teamEl.value);}
     function renderAdmin(){
@@ -466,7 +662,8 @@
     }
     function normalize(s){return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
     async function savePrediction(){
-      await saveRegistration(true);
+      const regOk = await saveRegistration(true);
+      if(!regOk) return;
       const data=store();
       const bambooId=normalizeId($('bambooId')?.value);
       const emp=employeeById(bambooId);
@@ -481,17 +678,45 @@
       const championValue=(bonusAlreadyLocked||deadlinePassed) ? (existing?.champion||'') : $('champion').value.trim();
       const goldenBootValue=(bonusAlreadyLocked||deadlinePassed) ? (existing?.goldenBoot||'') : $('goldenBoot').value.trim();
       const prediction={id:existing?.id||Date.now(),bambooId,participant:name,team:groupLead,role:emp?.role||'',registrationStatus,champion:championValue,goldenBoot:goldenBootValue,matches:{},createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString(),bonusLockedAt:(bonusAlreadyLocked?existing?.bonusLockedAt:null)||((championValue||goldenBootValue)?new Date().toISOString():null)};
-      matches.forEach(m=>{const type=$('ptype_'+m.id)?.value;if(!type)return;const obj={type};if(type==='winner')obj.winner=$('win_'+m.id).value;if(type==='double_chance')obj.doubleChance=$('dc_'+m.id).value;if(type==='exact_score'){obj.homeScore=$('hs_'+m.id).value;obj.awayScore=$('as_'+m.id).value}if(type==='total_goals')obj.totalGoals=$('tg_'+m.id).value;if(type==='both_score')obj.btts=$('btts_'+m.id).value;if(type==='anytime_scorer'){obj.scorer=$('ats_player_'+m.id).value;obj.scorerTeam=$('ats_team_'+m.id).value}if(type==='scorer'){obj.scorer=$('sc_player_'+m.id).value;obj.scorerTeam=$('sc_team_'+m.id).value;obj.scorerGoals=$('sc_goals_'+m.id).value}prediction.matches[m.id]=obj});
+
+      const errors=[];
+      const lockedAttempts=[];
+      matches.forEach(m=>{
+        const type=fieldValue('ptype_'+m.id);
+        const saved=existing?.matches?.[m.id];
+        if(isMatchLocked(m)){
+          if(saved) prediction.matches[m.id]=saved;
+          if(type && !saved) lockedAttempts.push(`${m.home} vs ${m.away}`);
+          return;
+        }
+        const built=buildMatchPrediction(m);
+        if(built.error) errors.push(built.error);
+        else if(built.obj) prediction.matches[m.id]=built.obj;
+      });
+      if(lockedAttempts.length){toast('Prono bloqué : délai dépassé pour '+lockedAttempts[0]+'.');return}
+      if(errors.length){toast(errors[0]);return}
+
       data.predictions=data.predictions.filter(p=>!(bambooId&&normalizeId(p.bambooId)===bambooId) && !(!bambooId&&normalize(p.participant)===normalize(name)));
-      data.predictions.push(prediction); setStore(data); await syncPredictionToSheet(prediction); refreshBonusLockState(); toast(isRemoteEnabled() ? 'Pronostic synchronisé ✅' : (bonusAlreadyLocked?'Pronostic enregistré localement. Bonus conservé et verrouillé ✅':'Pronostic enregistré localement ✅')); renderLeaderboard();
+      data.predictions.push(prediction);
+      setStore(data);
+      const syncResult = await syncPredictionToSheet(prediction);
+      refreshBonusLockState();
+      populatePredictionFields();
+      renderLeaderboard();
+      if(isRemoteEnabled() && !syncResult.ok){
+        toast('Google Sheets non confirmé : prono gardé localement + mis en file d’attente. Réessaie/actualise avant de fermer si possible.');
+        return;
+      }
+      toast(isRemoteEnabled() ? 'Pronostic synchronisé dans Google Sheets ✅' : (bonusAlreadyLocked?'Pronostic enregistré localement. Bonus conservé et verrouillé ✅':'Pronostic enregistré localement ✅'));
     }
+
 
     function resetForm(){document.querySelectorAll('#bet input,#bet select').forEach(el=>el.value='');lookupEmployee();refreshBonusLockState();toast('Formulaire réinitialisé')}
     function clearAll(){if(confirm('Supprimer toutes les données ?')){localStorage.removeItem('swc2026');renderLeaderboard();renderAdmin();toast('Données supprimées')}}
     function exportCSV(){const rows=leaderboard();const csv=['Rang,Bamboo ID,Participant,Group Lead,Statut,Score,Scores exacts,Vainqueurs,Buteurs'].concat(rows.map((p,i)=>`${i+1},"${p.bambooId||''}","${p.participant}","${p.team||''}","${p.registrationStatus||''}",${p.score},${p.exact},${p.winners},${p.scorerHits}`)).join('\n');download('support-world-cup-classement.csv',csv,'text/csv')}
     function downloadJSON(){download('support-world-cup-data.json',JSON.stringify(store(),null,2),'application/json')}
     function download(filename,content,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=filename;a.click();URL.revokeObjectURL(a.href)}
-    initNav();renderSchedule();renderCalendar();renderBetForms();renderAdmin();renderLeaderboard();loadRegistration();renderRegistrationStats();loadRemoteStats();refreshBonusLockState();updateRegistrationSummary(false);
+    initNav();renderSchedule();renderCalendar();renderBetForms();renderAdmin();renderLeaderboard();loadRegistration();renderRegistrationStats();loadRemoteStats();refreshBonusLockState();updateRegistrationSummary(false);retryPendingSync();setInterval(retryPendingSync, 45000);
     document.addEventListener('input', function(e){ if(e.target && (e.target.id==='participant'||e.target.id==='bambooId'||e.target.id==='team')) { if(e.target.id==='bambooId') lookupEmployee(); else { refreshBonusLockState(); updateRegistrationSummary(); } } });
     document.addEventListener('change', function(e){ if(e.target && (e.target.id==='participant'||e.target.id==='bambooId'||e.target.id==='team')) { if(e.target.id==='bambooId') lookupEmployee(); else { refreshBonusLockState(); updateRegistrationSummary(); } } });
   </script>
