@@ -617,14 +617,26 @@
     function buildMatchPrediction(m){
       const type=fieldValue('ptype_'+m.id);
       if(!type) return {obj:null};
-      const obj={type};
+
+      const matchLabel = `${m.home} vs ${m.away}`;
+      const obj={
+        type,
+        matchId:m.id,
+        match:matchLabel,
+        homeTeam:m.home,
+        awayTeam:m.away,
+        predictionText:''
+      };
+
       if(type==='winner'){
         obj.winner=fieldValue('win_'+m.id);
         if(!obj.winner) return {error:`Choisis le vainqueur pour ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — Vainqueur : ${obj.winner}`;
       }
       if(type==='double_chance'){
         obj.doubleChance=fieldValue('dc_'+m.id);
         if(!obj.doubleChance) return {error:`Choisis la double chance pour ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — Double chance : ${obj.doubleChance}`;
       }
       if(type==='exact_score'){
         const hs=fieldValue('hs_'+m.id);
@@ -632,19 +644,23 @@
         if(!validNonNegativeInteger(hs) || !validNonNegativeInteger(as)) return {error:`Renseigne les deux scores exacts pour ${m.home} vs ${m.away}. Le score 0 est accepté.`};
         obj.homeScore=normalizeScore(hs);
         obj.awayScore=normalizeScore(as);
+        obj.predictionText=`${m.home} ${obj.homeScore} - ${obj.awayScore} ${m.away}`;
       }
       if(type==='total_goals'){
         obj.totalGoals=fieldValue('tg_'+m.id);
         if(!obj.totalGoals) return {error:`Choisis le total de buts pour ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — Total buts : ${obj.totalGoals}`;
       }
       if(type==='both_score'){
         obj.btts=fieldValue('btts_'+m.id);
         if(!obj.btts) return {error:`Choisis Oui ou Non pour “les deux équipes marquent” sur ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — Les deux équipes marquent : ${obj.btts}`;
       }
       if(type==='anytime_scorer'){
         obj.scorer=fieldValue('ats_player_'+m.id);
         obj.scorerTeam=fieldValue('ats_team_'+m.id);
         if(!obj.scorer) return {error:`Choisis un buteur pour ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — Buteur : ${obj.scorer}${obj.scorerTeam ? ' ('+obj.scorerTeam+')' : ''}`;
       }
       if(type==='scorer'){
         obj.scorer=fieldValue('sc_player_'+m.id);
@@ -652,10 +668,12 @@
         obj.scorerGoals=fieldValue('sc_goals_'+m.id);
         if(!obj.scorer) return {error:`Choisis un buteur pour ${m.home} vs ${m.away}.`};
         if(!/^\d+$/.test(obj.scorerGoals) || Number(obj.scorerGoals)<1) return {error:`Le nombre de buts exact doit être au moins 1 pour ${m.home} vs ${m.away}.`};
+        obj.predictionText=`${matchLabel} — ${obj.scorer}${obj.scorerTeam ? ' ('+obj.scorerTeam+')' : ''} : ${obj.scorerGoals} but(s)`;
       }
       return {obj};
     }
-    function setIfExists(id,value){const el=$(id); if(el) el.value=value ?? ''}
+    
+function setIfExists(id,value){const el=$(id); if(el) el.value=value ?? ''}
     function populatePredictionFields(){
       const existing=findPredictionByParticipant?.();
       if(!existing || !existing.matches) return;
