@@ -277,14 +277,22 @@
     }
     async function remotePost(action, payload={}, options={}){
       if(!isRemoteEnabled()) return {ok:false, offline:true, message:'Google Sheets non connecté'};
+
       const attempts = options.attempts || 3;
       const timeoutMs = options.timeoutMs || 20000;
       const spreadLoad = options.spreadLoad !== false;
       let lastError = null;
 
+      const requestBody = JSON.stringify({
+        action,
+        requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        ...payload
+      });
+
       // Petit délai aléatoire pour éviter que 500 personnes frappent Apps Script exactement à la même seconde.
       if(spreadLoad) await sleep(250 + Math.floor(Math.random()*1750));
 
+      // 1) Tentative principale : fetch avec réponse lisible.
       for(let attempt=1; attempt<=attempts; attempt++){
         const controller = new AbortController();
         const timer = setTimeout(()=>controller.abort(), timeoutMs);
@@ -293,27 +301,74 @@
             method:'POST',
             mode:'cors',
             headers:{'Content-Type':'text/plain;charset=utf-8'},
-            body: JSON.stringify({action, requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`, ...payload}),
+            body: requestBody,
             signal: controller.signal
           });
           clearTimeout(timer);
-          const text = await res.text();
+
+          const responseText = await res.text();
           let result;
-          try{ result = text ? JSON.parse(text) : {}; }
-          catch(parseErr){ result = {ok:false, message:'Réponse Google Sheets illisible', raw:text.slice(0,180)}; }
+          try{ result = responseText ? JSON.parse(responseText) : {}; }
+          catch(parseErr){ result = {ok:false, message:'Réponse Google Sheets illisible', raw:responseText.slice(0,180)}; }
+
           if(res.ok && result.ok) return result;
+
           lastError = result || {ok:false, status:res.status};
+
           // Si Apps Script refuse pour une règle métier, on ne retry pas.
           if(result && (result.locked || result.validationError || result.forbidden)) return result;
         }catch(e){
           clearTimeout(timer);
           lastError = {ok:false, error:String(e)};
         }
+
         if(attempt < attempts){
           const backoff = Math.min(8000, 700 * Math.pow(2, attempt-1)) + Math.floor(Math.random()*1200);
           await sleep(backoff);
         }
       }
+
+      // 2) Fallback anti-CORS : on envoie quand même vers Apps Script.
+      // Certaines configurations Google Apps Script écrivent bien dans Sheets, mais le navigateur bloque la lecture de la réponse.
+      // En no-cors, la réponse est opaque, donc on ne peut pas la confirmer, mais l'envoi arrive côté serveur.
+      if(action === 'register' || action === 'savePrediction'){
+        try{
+          await fetch(APPS_SCRIPT_URL, {
+            method:'POST',
+            mode:'no-cors',
+            headers:{'Content-Type':'text/plain;charset=utf-8'},
+            body: requestBody,
+            keepalive: true
+          });
+          return {
+            ok: true,
+            opaque: true,
+            unconfirmed: true,
+            message: 'Envoi transmis à Google Sheets. La réponse est masquée par le navigateur, vérifie le fichier de suivi.'
+          };
+        }catch(noCorsErr){
+          lastError = {ok:false, error:String(noCorsErr), previous:lastError};
+        }
+
+        // Dernier secours : sendBeacon, utile sur mobile ou réseau instable.
+        try{
+          if(navigator.sendBeacon){
+            const blob = new Blob([requestBody], {type:'text/plain;charset=utf-8'});
+            const sent = navigator.sendBeacon(APPS_SCRIPT_URL, blob);
+            if(sent){
+              return {
+                ok: true,
+                beacon: true,
+                unconfirmed: true,
+                message: 'Envoi transmis via file de secours. Vérifie le fichier de suivi.'
+              };
+            }
+          }
+        }catch(beaconErr){
+          lastError = {ok:false, error:String(beaconErr), previous:lastError};
+        }
+      }
+
       return {...(lastError||{}), ok:false, retryExhausted:true};
     }
     async function retryPendingSync(){
